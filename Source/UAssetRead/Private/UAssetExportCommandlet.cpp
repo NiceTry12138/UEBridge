@@ -68,10 +68,15 @@ int32 UAssetExportCommandlet::Main(const FString& Params)
 		return 1;
 	}
 
+	const bool bStdout = FParse::Param(*Params, TEXT("stdout"));
+
 	FString OutputDir;
-	if (!FParse::Value(*Params, TEXT("OutputDir="), OutputDir))
+	if (!bStdout)
 	{
-		OutputDir = FPaths::ProjectSavedDir() / TEXT("AssetExport");
+		if (!FParse::Value(*Params, TEXT("OutputDir="), OutputDir))
+		{
+			OutputDir = FPaths::ProjectSavedDir() / TEXT("AssetExport");
+		}
 	}
 
 	FString FormatStr = TEXT("json");
@@ -100,6 +105,9 @@ int32 UAssetExportCommandlet::Main(const FString& Params)
 	int32 Succeeded = 0;
 	int32 Failed = 0;
 
+	// Collect all JSON lines for stdout mode
+	TArray<FString> StdoutLines;
+
 	for (const FAssetData& AssetData : Assets)
 	{
 		UObject* Asset = AssetData.GetAsset();
@@ -118,22 +126,48 @@ int32 UAssetExportCommandlet::Main(const FString& Params)
 			continue;
 		}
 
-		// Mirror the asset path under OutputDir
-		// /Game/Characters/PlayerCharacter -> OutputDir/Game/Characters/PlayerCharacter.json
-		FString RelativePath = AssetData.PackageName.ToString();
-		RelativePath.RemoveFromStart(TEXT("/"));
-		const FString OutputFile = OutputDir / RelativePath + TEXT(".json");
-
-		if (FJsonYamlWriter::WriteToFile(JsonObj, OutputFile, Format))
+		if (bStdout)
 		{
-			UE_LOG(LogTemp, Log, TEXT("Exported: %s"), *OutputFile);
+			FString JsonStr = FJsonYamlWriter::ToJsonString(JsonObj);
+			// Collapse to single line for JSONL output
+			JsonStr.ReplaceInline(TEXT("\n"), TEXT(" "));
+			JsonStr.ReplaceInline(TEXT("\r"), TEXT(""));
+			StdoutLines.Add(MoveTemp(JsonStr));
 			++Succeeded;
 		}
 		else
 		{
-			UE_LOG(LogTemp, Error, TEXT("Write failed: %s"), *OutputFile);
-			++Failed;
+			// Mirror the asset path under OutputDir
+			// /Game/Characters/PlayerCharacter -> OutputDir/Game/Characters/PlayerCharacter.json
+			FString RelativePath = AssetData.PackageName.ToString();
+			RelativePath.RemoveFromStart(TEXT("/"));
+			const FString OutputFile = OutputDir / RelativePath + TEXT(".json");
+
+			if (FJsonYamlWriter::WriteToFile(JsonObj, OutputFile, Format))
+			{
+				UE_LOG(LogTemp, Log, TEXT("Exported: %s"), *OutputFile);
+				++Succeeded;
+			}
+			else
+			{
+				UE_LOG(LogTemp, Error, TEXT("Write failed: %s"), *OutputFile);
+				++Failed;
+			}
 		}
+	}
+
+	if (bStdout)
+	{
+		// Flush log first so it doesn't interleave with our sentinel output
+		GLog->Flush();
+		FPlatformMisc::LocalPrint(TEXT("\n<<<ASSET_DUMP_BEGIN>>>\n"));
+		for (const FString& Line : StdoutLines)
+		{
+			FPlatformMisc::LocalPrint(*Line);
+			FPlatformMisc::LocalPrint(TEXT("\n"));
+		}
+		FPlatformMisc::LocalPrint(TEXT("<<<ASSET_DUMP_END>>>\n"));
+		GLog->Flush();
 	}
 
 	UE_LOG(LogTemp, Log,

@@ -73,15 +73,63 @@ UnrealEditor-Cmd.exe "S:\Project\UEProject\Empty54\Empty54.uproject" ^
   -Format=yaml
 ```
 
+#### 输出到标准输出（供 Agent / 脚本直接消费）
+
+加 `-stdout` 参数后，JSON 不写入文件，而是打印到 stdout，并用固定分隔符包裹，方便在日志噪声中可靠提取。
+
+```bat
+UnrealEditor-Cmd.exe "S:\Project\UEProject\Empty54\Empty54.uproject" ^
+  -run=AssetExport ^
+  -AssetPath="/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter" ^
+  -stdout ^
+  -NoLogTimes -unattended -nosplash
+```
+
+> `-NoLogTimes -unattended -nosplash` 可大幅减少 UE 日志噪声，建议 `-stdout` 模式下始终附加。
+
+**stdout 输出格式：**
+
+```
+<<<ASSET_DUMP_BEGIN>>>
+{"assetPath":"/Game/.../BP_ThirdPersonCharacter",...}
+<<<ASSET_DUMP_END>>>
+```
+
+多个资产时每行一个 JSON（JSONL）：
+
+```
+<<<ASSET_DUMP_BEGIN>>>
+{"assetPath":"/Game/A",...}
+{"assetPath":"/Game/B",...}
+<<<ASSET_DUMP_END>>>
+```
+
+**Agent 端提取规则（正则）：**
+
+```python
+import re, json
+
+output = subprocess.check_output(["UnrealEditor-Cmd.exe", ...], text=True)
+m = re.search(r'<<<ASSET_DUMP_BEGIN>>>\n(.*?)<<<ASSET_DUMP_END>>>', output, re.DOTALL)
+if m:
+    records = [json.loads(line) for line in m.group(1).splitlines() if line.strip()]
+```
+
+```javascript
+const m = output.match(/<<<ASSET_DUMP_BEGIN>>>\n([\s\S]*?)<<<ASSET_DUMP_END>>>/);
+const records = m[1].trim().split('\n').map(l => JSON.parse(l));
+```
+
 #### 全部参数
 
 | 参数 | 类型 | 说明 | 默认值 |
 |------|------|------|--------|
 | `-AssetPath=` | 字符串 | 单个资产包路径或目录路径（目录须以 `/` 结尾） | **必填** |
-| `-OutputDir=` | 字符串 | 输出根目录，文件按资产路径镜像存放 | `{项目}/Saved/AssetExport` |
-| `-Format=` | `json` \| `yaml` | 输出格式 | `json` |
+| `-OutputDir=` | 字符串 | 输出根目录，文件按资产路径镜像存放（`-stdout` 时忽略） | `{项目}/Saved/AssetExport` |
+| `-Format=` | `json` \| `yaml` | 输出格式（`-stdout` 时始终为 JSON） | `json` |
 | `-Recursive` | 开关 | 批量模式下递归子目录 | 关闭 |
 | `-Filter=` | 逗号分隔 | 按资产类名过滤，如 `Blueprint,DataTable,StaticMesh` | 全部类型 |
+| `-stdout` | 开关 | 输出到 stdout（JSONL + 分隔符），不写文件 | 关闭 |
 
 #### 输出文件结构
 
