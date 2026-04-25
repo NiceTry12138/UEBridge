@@ -14,10 +14,44 @@
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "UObject/ReflectedTypeAccessors.h"
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Derive a human-readable output pin name from mask bits when OutputName is None. */
+static FString GetOutputPinName(const FExpressionOutput& Output, int32 OutputIdx)
+{
+	if (Output.OutputName != NAME_None)
+		return Output.OutputName.ToString();
+	if (Output.Mask)
+	{
+		FString Name;
+		if (Output.MaskR) Name += TEXT("R");
+		if (Output.MaskG) Name += TEXT("G");
+		if (Output.MaskB) Name += TEXT("B");
+		if (Output.MaskA) Name += TEXT("A");
+		if (!Name.IsEmpty()) return Name;
+	}
+	return FString::Printf(TEXT("Out%d"), OutputIdx);
+}
+
+/** Derive GLSL-style type string from mask bits. */
+static FString GetOutputPinType(const FExpressionOutput& Output)
+{
+	if (!Output.Mask)
+		return TEXT("float4"); // unmasked = full color
+	const int32 Channels = (Output.MaskR ? 1 : 0) + (Output.MaskG ? 1 : 0)
+						  + (Output.MaskB ? 1 : 0) + (Output.MaskA ? 1 : 0);
+	switch (Channels)
+	{
+		case 1: return TEXT("float");
+		case 2: return TEXT("float2");
+		case 3: return TEXT("float3");
+		default: return TEXT("float4");
+	}
+}
 
 /** Build "extra" data for well-known material expression types. */
 static TSharedPtr<FJsonObject> BuildMaterialExpressionExtra(UMaterialExpression* Expr)
@@ -164,7 +198,9 @@ static TSharedPtr<FJsonObject> BuildMaterialGraph(UMaterial* Material)
 
 			TSharedPtr<FJsonObject> PinObj = MakeShareable(new FJsonObject);
 			PinObj->SetStringField(TEXT("pin_id"), PinId);
-			PinObj->SetStringField(TEXT("name"), Output.OutputName.ToString());
+			PinObj->SetStringField(TEXT("name"), GetOutputPinName(Output, OutputIdx));
+			PinObj->SetNumberField(TEXT("output_index"), OutputIdx);
+			PinObj->SetStringField(TEXT("type"), GetOutputPinType(Output));
 			PinObj->SetStringField(TEXT("direction"), TEXT("output"));
 			PinObj->SetArrayField(TEXT("links"), TArray<TSharedPtr<FJsonValue>>());
 			PinsArray.Add(MakeShareable(new FJsonValueObject(PinObj)));
@@ -181,7 +217,7 @@ static TSharedPtr<FJsonObject> BuildMaterialGraph(UMaterial* Material)
 
 		struct FResultPin
 		{
-			const TCHAR* Name;
+			FString Name;
 			FExpressionInput* Input;
 		};
 
@@ -191,17 +227,34 @@ static TSharedPtr<FJsonObject> BuildMaterialGraph(UMaterial* Material)
 		{
 			ResultPins =
 			{
-				{ TEXT("BaseColor"),           (FExpressionInput*)&EditorData->BaseColor },
-				{ TEXT("Metallic"),            (FExpressionInput*)&EditorData->Metallic },
-				{ TEXT("Specular"),            (FExpressionInput*)&EditorData->Specular },
-				{ TEXT("Roughness"),           (FExpressionInput*)&EditorData->Roughness },
-				{ TEXT("EmissiveColor"),       (FExpressionInput*)&EditorData->EmissiveColor },
-				{ TEXT("Opacity"),             (FExpressionInput*)&EditorData->Opacity },
-				{ TEXT("OpacityMask"),         (FExpressionInput*)&EditorData->OpacityMask },
-				{ TEXT("Normal"),              (FExpressionInput*)&EditorData->Normal },
-				{ TEXT("WorldPositionOffset"), (FExpressionInput*)&EditorData->WorldPositionOffset },
-				{ TEXT("AmbientOcclusion"),    (FExpressionInput*)&EditorData->AmbientOcclusion },
+				{ TEXT("BaseColor"),                          (FExpressionInput*)&EditorData->BaseColor },
+				{ TEXT("Metallic"),                           (FExpressionInput*)&EditorData->Metallic },
+				{ TEXT("Specular"),                           (FExpressionInput*)&EditorData->Specular },
+				{ TEXT("Roughness"),                          (FExpressionInput*)&EditorData->Roughness },
+				{ TEXT("Anisotropy"),                         (FExpressionInput*)&EditorData->Anisotropy },
+				{ TEXT("Normal"),                             (FExpressionInput*)&EditorData->Normal },
+				{ TEXT("Tangent"),                            (FExpressionInput*)&EditorData->Tangent },
+				{ TEXT("EmissiveColor"),                      (FExpressionInput*)&EditorData->EmissiveColor },
+				{ TEXT("Opacity"),                            (FExpressionInput*)&EditorData->Opacity },
+				{ TEXT("OpacityMask"),                        (FExpressionInput*)&EditorData->OpacityMask },
+				{ TEXT("WorldPositionOffset"),                (FExpressionInput*)&EditorData->WorldPositionOffset },
+				{ TEXT("Displacement"),                       (FExpressionInput*)&EditorData->Displacement },
+				{ TEXT("SubsurfaceColor"),                    (FExpressionInput*)&EditorData->SubsurfaceColor },
+				{ TEXT("ClearCoat"),                          (FExpressionInput*)&EditorData->ClearCoat },
+				{ TEXT("ClearCoatRoughness"),                 (FExpressionInput*)&EditorData->ClearCoatRoughness },
+				{ TEXT("AmbientOcclusion"),                   (FExpressionInput*)&EditorData->AmbientOcclusion },
+				{ TEXT("Refraction"),                         (FExpressionInput*)&EditorData->Refraction },
+				{ TEXT("PixelDepthOffset"),                   (FExpressionInput*)&EditorData->PixelDepthOffset },
+				{ TEXT("ShadingModelFromMaterialExpression"), (FExpressionInput*)&EditorData->ShadingModelFromMaterialExpression },
+				{ TEXT("SurfaceThickness"),                   (FExpressionInput*)&EditorData->SurfaceThickness },
+				{ TEXT("FrontMaterial"),                      (FExpressionInput*)&EditorData->FrontMaterial },
 			};
+			// CustomizedUVs[0..7]
+			for (int32 UVIdx = 0; UVIdx < 8; ++UVIdx)
+			{
+				ResultPins.Add({ FString::Printf(TEXT("CustomizedUV%d"), UVIdx),
+					(FExpressionInput*)&EditorData->CustomizedUVs[UVIdx] });
+			}
 		}
 
 		TArray<TSharedPtr<FJsonValue>> ResultPinsArray;
@@ -269,6 +322,18 @@ TSharedPtr<FJsonObject> FMaterialExporter::Export(UObject* Asset)
 		TSharedPtr<FJsonObject> Root = MakeShareable(new FJsonObject);
 		Root->SetStringField(TEXT("assetPath"), Material->GetPathName());
 		Root->SetStringField(TEXT("assetType"), TEXT("Material"));
+
+		// Top-level material metadata
+		Root->SetStringField(TEXT("material_domain"),
+			StaticEnum<EMaterialDomain>()->GetDisplayNameTextByValue((int64)Material->MaterialDomain.GetValue()).ToString());
+		Root->SetStringField(TEXT("blend_mode"),
+			StaticEnum<EBlendMode>()->GetDisplayNameTextByValue((int64)Material->BlendMode.GetValue()).ToString());
+		{
+			const EMaterialShadingModel SM = Material->GetShadingModels().GetFirstShadingModel();
+			Root->SetStringField(TEXT("shading_model"),
+				StaticEnum<EMaterialShadingModel>()->GetDisplayNameTextByValue((int64)SM).ToString());
+		}
+		Root->SetBoolField(TEXT("two_sided"), Material->TwoSided != 0);
 
 		TArray<TSharedPtr<FJsonValue>> GraphsArray;
 		GraphsArray.Add(MakeShareable(new FJsonValueObject(BuildMaterialGraph(Material))));
