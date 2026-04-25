@@ -6,6 +6,111 @@
 
 ---
 
+## 使用指南
+
+### 前置条件
+
+1. 将插件放置在项目的 `Plugins/UAssetRead/` 目录中并完成编译
+2. 在 UE 编辑器的插件管理页面（Edit → Plugins）确认 **UAssetRead** 已启用
+
+---
+
+### 方式一：Commandlet（批量命令行导出）
+
+Commandlet 在无 UI 的命令行模式下运行，适合批量导出和 CI/CD 流水线。
+
+**可执行文件（UE 5.4）：**
+```
+{引擎根目录}\Engine\Binaries\Win64\UnrealEditor-Cmd.exe
+```
+
+**调用格式：**
+```bat
+UnrealEditor-Cmd.exe "<项目>.uproject" -run=AssetExport [参数]
+```
+
+#### 导出单个资产
+
+```bat
+UnrealEditor-Cmd.exe "S:\Project\UEProject\Empty54\Empty54.uproject" ^
+  -run=AssetExport ^
+  -AssetPath="/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter" ^
+  -OutputDir="D:\Export"
+```
+
+输出文件：`D:\Export\Game\ThirdPerson\Blueprints\BP_ThirdPersonCharacter.json`
+
+#### 批量导出整个目录（递归）
+
+```bat
+UnrealEditor-Cmd.exe "S:\Project\UEProject\Empty54\Empty54.uproject" ^
+  -run=AssetExport ^
+  -AssetPath="/Game/" ^
+  -OutputDir="D:\Export" ^
+  -Recursive
+```
+
+> `-AssetPath` 填目录时必须以 `/` 结尾；填单个资产时不加 `/`。
+
+#### 只导出指定类型（按类型过滤）
+
+```bat
+UnrealEditor-Cmd.exe "S:\Project\UEProject\Empty54\Empty54.uproject" ^
+  -run=AssetExport ^
+  -AssetPath="/Game/" ^
+  -OutputDir="D:\Export" ^
+  -Recursive ^
+  -Filter=Blueprint,DataTable
+```
+
+#### 导出为 YAML 格式
+
+```bat
+UnrealEditor-Cmd.exe "S:\Project\UEProject\Empty54\Empty54.uproject" ^
+  -run=AssetExport ^
+  -AssetPath="/Game/Materials/" ^
+  -OutputDir="D:\Export" ^
+  -Format=yaml
+```
+
+#### 全部参数
+
+| 参数 | 类型 | 说明 | 默认值 |
+|------|------|------|--------|
+| `-AssetPath=` | 字符串 | 单个资产包路径或目录路径（目录须以 `/` 结尾） | **必填** |
+| `-OutputDir=` | 字符串 | 输出根目录，文件按资产路径镜像存放 | `{项目}/Saved/AssetExport` |
+| `-Format=` | `json` \| `yaml` | 输出格式 | `json` |
+| `-Recursive` | 开关 | 批量模式下递归子目录 | 关闭 |
+| `-Filter=` | 逗号分隔 | 按资产类名过滤，如 `Blueprint,DataTable,StaticMesh` | 全部类型 |
+
+#### 输出文件结构
+
+输出文件在 `OutputDir` 下按资产路径镜像存放：
+
+```
+OutputDir/
+└── Game/
+    ├── Characters/
+    │   ├── BP_Hero.json
+    │   └── BP_Enemy.json
+    ├── DataTables/
+    │   └── DT_Items.json
+    └── Materials/
+        └── M_Character.json
+```
+
+---
+
+### 方式二：编辑器内右键菜单（导出到剪贴板）
+
+在 UE 编辑器内容浏览器中，对任意资产**右键** → **Asset Actions** → **Export To JSON**。
+
+操作完成后，该资产的完整 JSON 内容已复制到系统剪贴板，直接粘贴即可使用。
+
+> 适合快速查看单个资产的导出结果，无需指定输出目录和重新编译。
+
+---
+
 ## 需求总览
 
 | # | 资产类型 | 导出内容 |
@@ -462,8 +567,8 @@ UAssetExportCommandlet : UCommandlet
 ```
 
 **调用方式：**
-```bash
-UE4Editor-Cmd.exe <ProjectPath> -run=AssetExport -AssetPath="/Game/Characters/PlayerCharacter" -OutputDir="D:/Export" -Format=json
+```bat
+UnrealEditor-Cmd.exe "<项目>.uproject" -run=AssetExport -AssetPath="/Game/Characters/PlayerCharacter" -OutputDir="D:/Export" -Format=json
 ```
 
 **参数：**
