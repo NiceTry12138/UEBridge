@@ -31,18 +31,22 @@ function makeSignal() {
 /** POST JSON to the UE HTTP server, return parsed response body */
 async function uePost(path, body) {
   const res = await fetch(`${BASE_URL}${path}`, {
-    method:  "POST",
+    method: "POST",
     headers: { "Content-Type": "application/json" },
-    body:    JSON.stringify(body),
-    signal:  makeSignal(),
+    body: JSON.stringify(body),
+    signal: makeSignal(),
   });
   const text = await res.text();
   if (!res.ok) {
     let msg = text;
     try { msg = JSON.parse(text)?.error ?? text; } catch {}
-    throw new Error(`UE HTTP ${res.status}: ${msg}`);
+    throw new Error(`UE HTTP ${res.status} on ${path}: ${msg}`);
   }
-  return JSON.parse(text);
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`UE returned non-JSON on ${path}: ${text.slice(0, 200)}`);
+  }
 }
 
 /** GET with query string params, return parsed response body */
@@ -147,6 +151,10 @@ server.tool(
 // Start
 // ---------------------------------------------------------------------------
 
+// 启动前打日志（stderr）
+console.error(`[ue-mcp] connecting UE at ${BASE_URL}, timeout=${TIMEOUT}ms`);
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
+console.error(`[ue-mcp] ready`);
 // Server is now listening on stdio; the process stays alive until the client disconnects.
