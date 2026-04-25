@@ -237,9 +237,12 @@ bool FUAssetReadModule::HandleListAssets(
 bool FUAssetReadModule::HandleDumpAsset(
 	const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
 {
-	// Parse body on network thread
-	FString BodyStr = FString(UTF8_TO_TCHAR(
-		reinterpret_cast<const char*>(Request.Body.GetData())));
+	// Parse body on network thread.
+	// Request.Body is a raw byte array without a null terminator – add one before
+	// passing to UTF8_TO_TCHAR so it does not read beyond the buffer.
+	TArray<uint8> BodyBytes = Request.Body;
+	BodyBytes.Add(0);
+	FString BodyStr = UTF8_TO_TCHAR(reinterpret_cast<const char*>(BodyBytes.GetData()));
 
 	TSharedPtr<FJsonObject> BodyJson;
 	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(BodyStr);
