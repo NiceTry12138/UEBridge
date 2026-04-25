@@ -268,7 +268,7 @@ bool FUAssetReadModule::HandleDumpAsset(
 			UObject* Asset = GetOrLoadAsset(AssetPath);
 			if (!Asset)
 			{
-				OnComplete(MakeJsonError(EHttpServerResponseCodes::NotFound,
+				OnComplete(MakeJsonError(EHttpServerResponseCodes::NoContent,
 					FString::Printf(TEXT("Asset not found: %s"), *AssetPath)));
 				return;
 			}
@@ -276,7 +276,7 @@ bool FUAssetReadModule::HandleDumpAsset(
 			FString JsonStr = FAssetExportCore::ExportAssetToString(Asset);
 			if (JsonStr.IsEmpty())
 			{
-				OnComplete(MakeJsonError(EHttpServerResponseCodes::InternalServerError,
+				OnComplete(MakeJsonError(EHttpServerResponseCodes::ServerError,
 					TEXT("No exporter for this asset type")));
 				return;
 			}
