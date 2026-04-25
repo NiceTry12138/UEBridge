@@ -1,0 +1,19 @@
+{
+  "name": "ue-asset-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server that wraps the UAssetRead HTTP API for use with Claude / GPT agents",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "node-fetch": "^3.3.2",
+    "zod": "^3.23.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

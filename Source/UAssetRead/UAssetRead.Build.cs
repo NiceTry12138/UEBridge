@@ -35,6 +35,7 @@ public class UAssetRead : ModuleRules
 			"ContentBrowserData",
 			"ToolMenus",          // UToolMenus
 			"PhysicsCore",        // UBodySetup
+			"HTTPServer",         // FHttpServerModule, IHttpRouter
 		});
 	}
 }

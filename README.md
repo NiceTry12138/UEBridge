@@ -159,6 +159,177 @@ OutputDir/
 
 ---
 
+### 方式三：HTTP API（供脚本 / Agent 实时查询）
+
+UE 编辑器运行期间，插件会在 **`localhost:8765`** 启动一个轻量 HTTP 服务。外部脚本或 Agent 可直接发 HTTP 请求获取资产 JSON，无需重启编辑器。
+
+> **注意**：HTTP 服务仅在 **编辑器模式**下启动，打包后的游戏不会开启。
+
+#### 接口列表
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET`  | `/health`       | 心跳检测，确认服务在线 |
+| `GET`  | `/list_assets`  | 列出指定目录下的资产 |
+| `POST` | `/dump_asset`   | 导出单个资产的完整 JSON |
+
+所有接口均返回 `application/json`，并附带 `Access-Control-Allow-Origin: *` 响应头。
+
+#### GET /health
+
+```bash
+curl http://localhost:8765/health
+```
+
+```json
+{ "status": "ok" }
+```
+
+#### GET /list_assets
+
+| 查询参数 | 类型 | 说明 | 默认值 |
+|----------|------|------|--------|
+| `path` | 字符串 | 目录路径，须以 `/` 结尾 | **必填** |
+| `filter` | 字符串 | 逗号分隔类名，如 `Blueprint,DataTable` | 全部 |
+| `recursive` | `true` \| `false` | 是否递归子目录 | `false` |
+
+```bash
+curl "http://localhost:8765/list_assets?path=/Game/ThirdPerson/Blueprints/&recursive=true"
+```
+
+```json
+{
+  "path": "/Game/ThirdPerson/Blueprints/",
+  "count": 2,
+  "assets": [
+    { "path": "/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter", "type": "Blueprint" },
+    { "path": "/Game/ThirdPerson/Blueprints/BP_ThirdPersonGameMode",  "type": "Blueprint" }
+  ]
+}
+```
+
+#### POST /dump_asset
+
+请求体为 JSON，`path` 字段为资产包路径。
+
+```bash
+curl -X POST http://localhost:8765/dump_asset \
+  -H "Content-Type: application/json" \
+  -d '{"path": "/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter"}'
+```
+
+返回与 Commandlet / 右键菜单完全相同结构的 JSON。
+
+#### 错误响应
+
+| HTTP 状态码 | 含义 |
+|-------------|------|
+| `400` | 请求参数缺失或 body 非合法 JSON |
+| `404` | 资产路径不存在或无法加载 |
+| `500` | 该资产类型暂无导出器 |
+
+```json
+{ "error": "Asset not found: /Game/Foo" }
+```
+
+#### 技术细节
+
+- **线程模型**：HTTP 回调发生在网络线程，接收到请求后立即将任务派发到 GameThread（`AsyncTask`），网络线程不阻塞；GameThread 完成 `LoadObject` + Export 后再写回响应。
+- **资产缓存**：最近访问的 **20 个**资产以 `AddToRoot` 方式固定在内存，防止 GC 反复卸载；每个条目超过 **5 分钟**未访问后自动释放。超出容量时按 LRU 淘汰。
+- **端口**：默认 `8765`，在 `UAssetReadModule.h` 中通过 `HttpPort` 常量修改。
+
+---
+
+### 方式四：MCP Server（供 Claude / GPT 等 Agent 工具调用）
+
+`MCPServer/` 目录提供一个 Node.js MCP Server 壳，将 UE HTTP API 包装为标准 MCP 工具，Agent 可像调用函数一样查询资产。
+
+#### 架构
+
+```
+Agent (Claude / GPT)
+    │  MCP JSON-RPC over stdio
+    ▼
+Node.js MCP Server  (MCPServer/server.js)
+    │  HTTP  localhost:8765
+    ▼
+UE Editor HTTP Server  (FUAssetReadModule)
+    │  GameThread AsyncTask
+    ▼
+FAssetExportCore → JSON
+```
+
+#### 安装
+
+```bash
+cd Plugins/UAssetRead/MCPServer
+npm install
+```
+
+#### 启动
+
+```bash
+node server.js
+```
+
+进程通过 **stdin/stdout** 与 Agent 通信（MCP stdio 传输），保持运行直到 Agent 断开连接。
+
+> 启动前确保 UE 编辑器已打开（HTTP Server 监听 `localhost:8765`）。
+
+#### 环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `UE_HTTP_URL`   | UE HTTP Server 地址 | `http://localhost:8765` |
+| `UE_TIMEOUT_MS` | 请求超时（毫秒）    | `30000` |
+
+#### 注册到 Claude Desktop
+
+在 `claude_desktop_config.json` 中添加：
+
+```json
+{
+  "mcpServers": {
+    "ue-asset-reader": {
+      "command": "node",
+      "args": ["S:/Project/UEProject/Empty54/Plugins/UAssetRead/MCPServer/server.js"]
+    }
+  }
+}
+```
+
+#### 注册到 Cursor / VS Code（Copilot MCP）
+
+在工作区 `.vscode/mcp.json` 中添加：
+
+```json
+{
+  "servers": {
+    "ue-asset-reader": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${workspaceFolder}/../UAssetRead/MCPServer/server.js"]
+    }
+  }
+}
+```
+
+#### 可用 MCP 工具
+
+| 工具名 | 说明 | 参数 |
+|--------|------|------|
+| `dump_asset`   | 导出单个资产的完整 JSON | `path: string` |
+| `list_assets`  | 列出目录下的资产       | `path: string`, `filter?: string`, `recursive?: boolean` |
+| `health_check` | 检测 UE HTTP Server 是否在线 | — |
+
+#### 对话示例
+
+> 用户：「帮我看看 BP_ThirdPersonCharacter 有哪些组件」
+>
+> Agent 调用 `dump_asset({ path: "/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter" })`，读取返回 JSON 中的 `components` 和 `components_flat` 字段后回答。
+
+---
+
 ## 需求总览
 
 | # | 资产类型 | 导出内容 |
