@@ -9,6 +9,9 @@
 #include "EdGraph/EdGraph.h"
 #include "EdGraphSchema_K2.h"
 #include "Kismet2/BlueprintEditorUtils.h"
+#include "GameFramework/Actor.h"
+#include "Components/SceneComponent.h"
+#include "Components/ActorComponent.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -89,32 +92,21 @@ static void CollectFunctionPins(UEdGraph* Graph,
 	}
 }
 
-// Recursive component tree builder
-static TSharedPtr<FJsonObject> ExportSCSNode(USCS_Node* SCSNode)
+// Recursive component tree builder (CDO-based, includes native components)
+static TSharedPtr<FJsonObject> ExportSceneComponent(USceneComponent* Comp)
 {
-	if (!SCSNode) return nullptr;
+	if (!Comp) return nullptr;
 
 	TSharedPtr<FJsonObject> CompObj = MakeShareable(new FJsonObject);
-	CompObj->SetStringField(TEXT("name"), SCSNode->GetVariableName().ToString());
-
-	FString CompTypeName;
-	if (SCSNode->ComponentClass)
-	{
-		CompTypeName = SCSNode->ComponentClass->GetName();
-	}
-	else if (SCSNode->ComponentTemplate)
-	{
-		CompTypeName = SCSNode->ComponentTemplate->GetClass()->GetName();
-	}
-	CompObj->SetStringField(TEXT("type"), CompTypeName);
+	CompObj->SetStringField(TEXT("name"), Comp->GetName());
+	CompObj->SetStringField(TEXT("type"), Comp->GetClass()->GetName());
 
 	TArray<TSharedPtr<FJsonValue>> Children;
-	for (USCS_Node* Child : SCSNode->GetChildNodes())
+	for (USceneComponent* Child : Comp->GetAttachChildren())
 	{
-		TSharedPtr<FJsonObject> ChildObj = ExportSCSNode(Child);
-		if (ChildObj.IsValid())
+		if (Child)
 		{
-			Children.Add(MakeShareable(new FJsonValueObject(ChildObj)));
+			Children.Add(MakeShareable(new FJsonValueObject(ExportSceneComponent(Child))));
 		}
 	}
 	CompObj->SetArrayField(TEXT("children"), Children);
@@ -178,11 +170,33 @@ TSharedPtr<FJsonObject> FBlueprintExporter::Export(UObject* Asset)
 		}
 
 		// Ubergraph (event graph) pages
+		TArray<TSharedPtr<FJsonValue>> EventsArray;
 		for (UEdGraph* Graph : Blueprint->UbergraphPages)
 		{
 			if (!Graph) continue;
 			GraphsArray.Add(MakeShareable(new FJsonValueObject(
 				FBlueprintGraphUtils::ExportGraph(Graph, TEXT("Ubergraph")))));
+
+			// Extract event entry nodes as a structured list
+			for (UEdGraphNode* Node : Graph->Nodes)
+			{
+				if (!Node) continue;
+				const FName NodeClassName = Node->GetClass()->GetFName();
+				if (NodeClassName == TEXT("K2Node_Event")
+					|| NodeClassName == TEXT("K2Node_CustomEvent")
+					|| NodeClassName == TEXT("K2Node_EnhancedInputAction")
+					|| NodeClassName == TEXT("K2Node_ComponentBoundEvent")
+					|| NodeClassName == TEXT("K2Node_ActorBoundEvent"))
+				{
+					TSharedPtr<FJsonObject> EvtObj = MakeShareable(new FJsonObject);
+					EvtObj->SetStringField(TEXT("name"),
+						Node->GetNodeTitle(ENodeTitleType::ListView).ToString());
+					EvtObj->SetStringField(TEXT("type"), NodeClassName.ToString());
+					EvtObj->SetStringField(TEXT("graph"), Graph->GetFName().ToString());
+					EvtObj->SetStringField(TEXT("node_id"), Node->NodeGuid.ToString(EGuidFormats::Digits));
+					EventsArray.Add(MakeShareable(new FJsonValueObject(EvtObj)));
+				}
+			}
 		}
 
 		// Macro graphs
@@ -194,6 +208,7 @@ TSharedPtr<FJsonObject> FBlueprintExporter::Export(UObject* Asset)
 		}
 
 		Root->SetArrayField(TEXT("functions"), FuncsArray);
+		Root->SetArrayField(TEXT("events"), EventsArray);
 		Root->SetArrayField(TEXT("graphs"), GraphsArray);
 	}
 
@@ -256,26 +271,33 @@ TSharedPtr<FJsonObject> FBlueprintExporter::Export(UObject* Asset)
 			Check = Check->GetSuperClass();
 		}
 
-		if (bIsActor && Blueprint->SimpleConstructionScript)
+		// Use the CDO to walk the full component tree (includes native C++ components)
+		if (bIsActor && Blueprint->GeneratedClass)
 		{
-			USCS_Node* RootNode = Blueprint->SimpleConstructionScript->GetDefaultSceneRootNode();
-			if (RootNode)
+			AActor* CDO = Cast<AActor>(Blueprint->GeneratedClass->GetDefaultObject(false));
+			if (CDO)
 			{
-				Root->SetObjectField(TEXT("components"), ExportSCSNode(RootNode));
-			}
-			else
-			{
-				// Multiple root nodes (no single default scene root)
-				TArray<TSharedPtr<FJsonValue>> RootsArray;
-				for (USCS_Node* Node : Blueprint->SimpleConstructionScript->GetRootNodes())
+				// Scene component tree rooted at the actor root component
+				USceneComponent* RootComp = CDO->GetRootComponent();
+				if (RootComp)
 				{
-					TSharedPtr<FJsonObject> NodeObj = ExportSCSNode(Node);
-					if (NodeObj.IsValid())
-					{
-						RootsArray.Add(MakeShareable(new FJsonValueObject(NodeObj)));
-					}
+					Root->SetObjectField(TEXT("components"), ExportSceneComponent(RootComp));
 				}
-				Root->SetArrayField(TEXT("components"), RootsArray);
+
+				// Non-scene components (e.g. CharacterMovementComponent, ProjectileMovement, etc.)
+				TArray<TSharedPtr<FJsonValue>> NonSceneArray;
+				for (UActorComponent* Comp : CDO->GetComponents())
+				{
+					if (!Comp || Cast<USceneComponent>(Comp)) continue;
+					TSharedPtr<FJsonObject> CompObj = MakeShareable(new FJsonObject);
+					CompObj->SetStringField(TEXT("name"), Comp->GetName());
+					CompObj->SetStringField(TEXT("type"), Comp->GetClass()->GetName());
+					NonSceneArray.Add(MakeShareable(new FJsonValueObject(CompObj)));
+				}
+				if (NonSceneArray.Num() > 0)
+				{
+					Root->SetArrayField(TEXT("non_scene_components"), NonSceneArray);
+				}
 			}
 		}
 	}
