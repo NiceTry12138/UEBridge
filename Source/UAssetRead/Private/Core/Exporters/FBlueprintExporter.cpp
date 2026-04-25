@@ -92,25 +92,94 @@ static void CollectFunctionPins(UEdGraph* Graph,
 	}
 }
 
-// Recursive component tree builder (CDO-based, includes native components)
-static TSharedPtr<FJsonObject> ExportSceneComponent(USceneComponent* Comp)
+// ---------------------------------------------------------------------------
+// Component tree helpers
+// ---------------------------------------------------------------------------
+
+// Recursively build a JSON subtree for one SCS node and all its SCS children.
+// Also appends a flat entry for every node visited.
+static TSharedPtr<FJsonObject> BuildSCSSubtree(
+	USCS_Node* Node, TArray<TSharedPtr<FJsonObject>>& OutFlat)
+{
+	if (!Node) return nullptr;
+
+	FString TypeStr;
+	if (Node->ComponentClass)
+		TypeStr = Node->ComponentClass->GetName();
+	else if (Node->ComponentTemplate)
+		TypeStr = Node->ComponentTemplate->GetClass()->GetName();
+
+	// Flat entry
+	{
+		TSharedPtr<FJsonObject> F = MakeShareable(new FJsonObject);
+		F->SetStringField(TEXT("name"),   Node->GetVariableName().ToString());
+		F->SetStringField(TEXT("type"),   TypeStr);
+		F->SetStringField(TEXT("source"), TEXT("scs"));
+		OutFlat.Add(F);
+	}
+
+	TArray<TSharedPtr<FJsonValue>> ChildrenJson;
+	for (USCS_Node* Child : Node->GetChildNodes())
+	{
+		TSharedPtr<FJsonObject> ChildObj = BuildSCSSubtree(Child, OutFlat);
+		if (ChildObj.IsValid())
+			ChildrenJson.Add(MakeShareable(new FJsonValueObject(ChildObj)));
+	}
+
+	TSharedPtr<FJsonObject> Obj = MakeShareable(new FJsonObject);
+	Obj->SetStringField(TEXT("name"),   Node->GetVariableName().ToString());
+	Obj->SetStringField(TEXT("type"),   TypeStr);
+	Obj->SetStringField(TEXT("source"), TEXT("scs"));
+	Obj->SetArrayField(TEXT("children"), ChildrenJson);
+	return Obj;
+}
+
+// Recursively build the native scene-component tree from the CDO's attach
+// hierarchy, injecting SCS subtrees under whichever native component they
+// declare as their parent (SCSByNativeParent key = native component name).
+static TSharedPtr<FJsonObject> BuildNativeSceneTree(
+	USceneComponent* Comp,
+	const TMap<FName, TArray<TSharedPtr<FJsonObject>>>& SCSByNativeParent,
+	TArray<TSharedPtr<FJsonObject>>& OutFlat)
 {
 	if (!Comp) return nullptr;
 
-	TSharedPtr<FJsonObject> CompObj = MakeShareable(new FJsonObject);
-	CompObj->SetStringField(TEXT("name"), Comp->GetName());
-	CompObj->SetStringField(TEXT("type"), Comp->GetClass()->GetName());
+	// Flat entry
+	{
+		TSharedPtr<FJsonObject> F = MakeShareable(new FJsonObject);
+		F->SetStringField(TEXT("name"),   Comp->GetName());
+		F->SetStringField(TEXT("type"),   Comp->GetClass()->GetName());
+		F->SetStringField(TEXT("source"), TEXT("native"));
+		OutFlat.Add(F);
+	}
 
-	TArray<TSharedPtr<FJsonValue>> Children;
+	TArray<TSharedPtr<FJsonValue>> ChildrenJson;
+
+	// Native children (CDO attach hierarchy)
 	for (USceneComponent* Child : Comp->GetAttachChildren())
 	{
-		if (Child)
-		{
-			Children.Add(MakeShareable(new FJsonValueObject(ExportSceneComponent(Child))));
-		}
+		if (!Child) continue;
+		TSharedPtr<FJsonObject> ChildObj =
+			BuildNativeSceneTree(Child, SCSByNativeParent, OutFlat);
+		if (ChildObj.IsValid())
+			ChildrenJson.Add(MakeShareable(new FJsonValueObject(ChildObj)));
 	}
-	CompObj->SetArrayField(TEXT("children"), Children);
-	return CompObj;
+
+	// SCS children whose ParentComponentOrVariableName matches this component
+	const TArray<TSharedPtr<FJsonObject>>* SCSChildren =
+		SCSByNativeParent.Find(FName(*Comp->GetName()));
+	if (SCSChildren)
+	{
+		for (const TSharedPtr<FJsonObject>& SC : *SCSChildren)
+			ChildrenJson.Add(MakeShareable(new FJsonValueObject(SC)));
+	}
+
+	TSharedPtr<FJsonObject> Obj = MakeShareable(new FJsonObject);
+	Obj->SetStringField(TEXT("name"),   Comp->GetName());
+	Obj->SetStringField(TEXT("type"),   Comp->GetClass()->GetName());
+	Obj->SetStringField(TEXT("source"), TEXT("native"));
+	Obj->SetArrayField(TEXT("children"), ChildrenJson);
+	return Obj;
 }
 
 // ---------------------------------------------------------------------------
@@ -271,34 +340,101 @@ TSharedPtr<FJsonObject> FBlueprintExporter::Export(UObject* Asset)
 			Check = Check->GetSuperClass();
 		}
 
-		// Use the CDO to walk the full component tree (includes native C++ components)
+		// Build a merged component tree: native components (from CDO) + blueprint-
+		// added components (from SCS).  The CDO only carries native components;
+		// SCS nodes are instantiated at spawn time and are therefore absent from
+		// GetAttachChildren() on the CDO.  We combine both sources here.
 		if (bIsActor && Blueprint->GeneratedClass)
 		{
 			AActor* CDO = Cast<AActor>(Blueprint->GeneratedClass->GetDefaultObject(false));
+			USimpleConstructionScript* SCS = Blueprint->SimpleConstructionScript;
+
+			TArray<TSharedPtr<FJsonObject>> FlatList;
+
+			// ── Step 1: Walk SCS root nodes, group by native parent name ─────────
+			// Each SCS root node declares which native (or DefaultSceneRoot) comp
+			// it attaches to via ParentComponentOrVariableName.
+			TMap<FName, TArray<TSharedPtr<FJsonObject>>> SCSByNativeParent;
+			if (SCS)
+			{
+				USCS_Node* DefaultRoot = SCS->GetDefaultSceneRootNode();
+				for (USCS_Node* RootNode : SCS->GetRootNodes())
+				{
+					if (!RootNode) continue;
+
+					if (RootNode == DefaultRoot)
+					{
+						// Synthetic root – its direct SCS children attach under the
+						// native root component (keyed by "ROOT").
+						for (USCS_Node* Child : RootNode->GetChildNodes())
+						{
+							TSharedPtr<FJsonObject> Sub = BuildSCSSubtree(Child, FlatList);
+							if (Sub.IsValid())
+								SCSByNativeParent.FindOrAdd(FName(TEXT("ROOT"))).Add(Sub);
+						}
+					}
+					else
+					{
+						TSharedPtr<FJsonObject> Sub = BuildSCSSubtree(RootNode, FlatList);
+						if (Sub.IsValid())
+						{
+							FName ParentName = RootNode->ParentComponentOrVariableName;
+							if (ParentName.IsNone())
+								ParentName = FName(TEXT("ROOT"));
+							SCSByNativeParent.FindOrAdd(ParentName).Add(Sub);
+						}
+					}
+				}
+			}
+
+			// ── Step 2: Build native tree from CDO, injecting SCS children ────────
 			if (CDO)
 			{
-				// Scene component tree rooted at the actor root component
 				USceneComponent* RootComp = CDO->GetRootComponent();
 				if (RootComp)
 				{
-					Root->SetObjectField(TEXT("components"), ExportSceneComponent(RootComp));
+					// If any SCS nodes were bucketed under "ROOT", move them under
+					// the actual native root component's name.
+					TArray<TSharedPtr<FJsonObject>>* RootBucket =
+						SCSByNativeParent.Find(FName(TEXT("ROOT")));
+					if (RootBucket)
+					{
+						SCSByNativeParent.FindOrAdd(FName(*RootComp->GetName()))
+							.Append(*RootBucket);
+						SCSByNativeParent.Remove(FName(TEXT("ROOT")));
+					}
+
+					Root->SetObjectField(TEXT("components"),
+						BuildNativeSceneTree(RootComp, SCSByNativeParent, FlatList));
 				}
 
-				// Non-scene components (e.g. CharacterMovementComponent, ProjectileMovement, etc.)
+				// Non-scene components (CharacterMovementComponent, etc.)
 				TArray<TSharedPtr<FJsonValue>> NonSceneArray;
 				for (UActorComponent* Comp : CDO->GetComponents())
 				{
 					if (!Comp || Cast<USceneComponent>(Comp)) continue;
 					TSharedPtr<FJsonObject> CompObj = MakeShareable(new FJsonObject);
-					CompObj->SetStringField(TEXT("name"), Comp->GetName());
-					CompObj->SetStringField(TEXT("type"), Comp->GetClass()->GetName());
+					CompObj->SetStringField(TEXT("name"),   Comp->GetName());
+					CompObj->SetStringField(TEXT("type"),   Comp->GetClass()->GetName());
+					CompObj->SetStringField(TEXT("source"), TEXT("native"));
 					NonSceneArray.Add(MakeShareable(new FJsonValueObject(CompObj)));
+
+					// Also add to flat list
+					TSharedPtr<FJsonObject> F = MakeShareable(new FJsonObject);
+					F->SetStringField(TEXT("name"),   Comp->GetName());
+					F->SetStringField(TEXT("type"),   Comp->GetClass()->GetName());
+					F->SetStringField(TEXT("source"), TEXT("native"));
+					FlatList.Add(F);
 				}
 				if (NonSceneArray.Num() > 0)
-				{
 					Root->SetArrayField(TEXT("non_scene_components"), NonSceneArray);
-				}
 			}
+
+			// ── Step 3: Output flat list ──────────────────────────────────────────
+			TArray<TSharedPtr<FJsonValue>> FlatJsonArray;
+			for (const TSharedPtr<FJsonObject>& Entry : FlatList)
+				FlatJsonArray.Add(MakeShareable(new FJsonValueObject(Entry)));
+			Root->SetArrayField(TEXT("components_flat"), FlatJsonArray);
 		}
 	}
 
