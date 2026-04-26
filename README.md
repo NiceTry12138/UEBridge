@@ -226,7 +226,8 @@ curl -X POST http://localhost:8765/dump_asset \
 |-------------|------|
 | `400` | 请求参数缺失或 body 非合法 JSON |
 | `404` | 资产路径不存在或无法加载 |
-| `500` | 该资产类型暂无导出器 |
+
+> 所有无专用导出器的资产类型均由 `FGenericExporter` 兜底处理，不再返回 500。
 
 ```json
 { "error": "Asset not found: /Game/Foo" }
@@ -816,7 +817,8 @@ UAssetRead/
 │       │   │   ├── FMeshExporter.h              # Mesh 导出
 │       │   │   ├── FMediaExporter.h             # 音频/贴图导出
 │       │   │   ├── FMaterialExporter.h          # 材质导出
-│       │   │   └── FWidgetExporter.h            # UMG 导出
+│       │   │   ├── FWidgetExporter.h            # UMG 导出
+│       │   │   └── FGenericExporter.h           # 通用反射兜底导出
 │       │   └── Utils/
 │       │       ├── FBlueprintGraphUtils.h       # 蓝图节点图解析
 │       │       └── FJsonYamlWriter.h            # JSON/YAML 序列化
@@ -828,7 +830,8 @@ UAssetRead/
 │           │   ├── FMeshExporter.cpp
 │           │   ├── FMediaExporter.cpp
 │           │   ├── FMaterialExporter.cpp
-│           │   └── FWidgetExporter.cpp
+│           │   ├── FWidgetExporter.cpp
+│           │   └── FGenericExporter.cpp         # 通用反射兜底导出
 │           └── Utils/
 │               ├── FBlueprintGraphUtils.cpp
 │               └── FJsonYamlWriter.cpp
@@ -877,6 +880,16 @@ else if (UMaterial* Mat = Cast<UMaterial>(Asset))
     // 需求8
 else if (UMaterialInstance* MI = Cast<UMaterialInstance>(Asset))
     // 需求8 (材质实例参数)
+else
+{
+    // 需求10: 通用反射兜底 — FGenericExporter
+    // 输出：所有属性值（FJsonObjectConverter）、属性元数据、函数签名、类继承链、接口列表
+}
+else
+{
+    // 需求10: 通用反射兜底 — FGenericExporter
+    // 输出：所有属性值（FJsonObjectConverter）、属性元数据、函数签名、类继承链、接口列表
+}
 ```
 
 ---
@@ -1034,11 +1047,12 @@ OutputDir/
 
 - [ ] 支持 YAML 输出（引入第三方 yaml-cpp 或自行实现简易 YAML Writer）
 - [ ] 支持 Level 资产导出（Actor 列表、Transform、引用关系）
-- [ ] 支持 AnimBlueprint 动画蓝图（状态机、Blend节点）
-- [ ] 支持 Niagara 系统导出
+- [x] 支持 AnimBlueprint 动画蓝图（状态机、Blend节点）→ `dump_animation_blueprint` HTTP 路由
+- [x] 支持 Niagara 系统导出 → `dump_niagara_system` HTTP 路由
 - [ ] 支持增量导出（基于资产修改时间）
 - [ ] 支持并行导出（多线程加载+序列化）
-- [ ] 添加资产依赖关系图导出
+- [x] 添加资产依赖关系图导出 → `get_asset_references` HTTP 路由
+- [x] 通用资产类型反射导出（无专用 Exporter 时自动兜底） → `FGenericExporter`
 - [ ] Web 可视化工具读取导出 JSON
 
 ---
@@ -1049,3 +1063,5 @@ OutputDir/
 |------|------|------|
 | 0.1 | 2026-04-25 | 初始需求文档 |
 | 0.2 | 2026-04-25 | 统一 Graph Schema：节点+连线分离，GUID 引用，DAG 结构 |
+| 0.3 | 2026-04-26 | 新增 HTTP 路由：`get_asset_references`、`dump_niagara_system`、`dump_level_sequence`、`dump_widget_tree`、`dump_animation_blueprint`；Blueprint CRUD 及节点操作路由；MCP Server 同步更新 |
+| 0.4 | 2026-04-26 | 新增 `FGenericExporter` 通用反射兜底导出器，所有未被专用 Exporter 覆盖的资产类型均可导出完整属性值、属性元数据、函数签名、类继承链和接口信息 |
