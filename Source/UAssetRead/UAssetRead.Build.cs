@@ -36,6 +36,15 @@ public class UAssetRead : ModuleRules
 			"ToolMenus",          // UToolMenus
 			"PhysicsCore",        // UBodySetup
 			"HTTPServer",         // FHttpServerModule, IHttpRouter
+			// New dependencies for extended commands
+			"Niagara",            // UNiagaraSystem, UNiagaraEmitterHandle
+			"NiagaraCore",        // Niagara core types
+			"NiagaraEditor",      // UNiagaraScriptSource, UNiagaraGraph, NiagaraNodeFunctionCall
+			"LevelSequence",      // ULevelSequence
+			"MovieScene",         // UMovieScene, FMovieSceneBinding
+			"MovieSceneTracks",   // UMovieSceneTrack subclasses
+			"AnimGraph",          // Animation graph nodes
+			"AnimGraphRuntime",   // Animation blueprint runtime
 		});
 	}
 }

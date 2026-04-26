@@ -38,9 +38,35 @@ private:
 	void StartHttpServer();
 	void StopHttpServer();
 
-	bool HandleDumpAsset (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
-	bool HandleListAssets(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
-	bool HandleHealth    (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleDumpAsset             (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleListAssets            (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleHealth                (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+
+	// Extended commands
+	bool HandleGetAssetReferences    (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleDumpNiagaraSystem     (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleDumpLevelSequence     (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleDumpWidgetTree        (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleDumpAnimBlueprint     (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+
+	// Blueprint CRUD commands
+	bool HandleCreateBlueprint       (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleAddBlueprintComponent (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleCompileBlueprint      (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleAddBlueprintVariable  (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleGetBlueprintInfo      (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleListBlueprints        (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+
+	// Blueprint node commands
+	bool HandleAddBlueprintEventNode       (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleAddBlueprintFunctionNode    (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleConnectBlueprintNodes       (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleFindBlueprintNodes          (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleAddBlueprintVarGetNode      (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleAddBlueprintVarSetNode      (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleGetBlueprintNodePins        (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleDeleteBlueprintNode         (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+	bool HandleBatchEditBlueprintNodes     (const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
 
 	TSharedPtr<IHttpRouter>    HttpRouter;
 	TArray<FHttpRouteHandle>   RouteHandles;

@@ -10,6 +10,7 @@
 #include "Core/Exporters/FMediaExporter.h"
 #include "Core/Exporters/FMaterialExporter.h"
 #include "Core/Exporters/FWidgetExporter.h"
+#include "Core/Exporters/FGenericExporter.h"
 
 // UE asset types
 #include "Engine/Blueprint.h"
@@ -69,12 +70,9 @@ TSharedPtr<FJsonObject> FAssetExportCore::ExportAsset(UObject* Asset)
 		return Exporter.Export(Asset);
 	}
 
-	// Unsupported type – return minimal info
-	TSharedPtr<FJsonObject> Fallback = MakeShareable(new FJsonObject);
-	Fallback->SetStringField(TEXT("assetPath"), Asset->GetPathName());
-	Fallback->SetStringField(TEXT("assetType"), Asset->GetClass()->GetName());
-	Fallback->SetStringField(TEXT("note"), TEXT("No exporter available for this asset type"));
-	return Fallback;
+	// Generic fallback: dump all reflection data (properties, functions, class hierarchy, interfaces)
+	FGenericExporter GenericExporter;
+	return GenericExporter.Export(Asset);
 }
 
 FString FAssetExportCore::ExportAssetToString(UObject* Asset)

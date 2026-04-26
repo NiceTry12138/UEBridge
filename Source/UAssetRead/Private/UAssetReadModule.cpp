@@ -35,22 +35,7 @@
 // Helpers
 // ---------------------------------------------------------------------------
 
-static TUniquePtr<FHttpServerResponse> MakeJsonResponse(
-	const FString& Body,
-	EHttpServerResponseCodes Code = EHttpServerResponseCodes::Ok)
-{
-	auto Response = FHttpServerResponse::Create(Body, TEXT("application/json; charset=utf-8"));
-	Response->Code = Code;
-	Response->Headers.Add(TEXT("Access-Control-Allow-Origin"), { TEXT("*") });
-	return Response;
-}
-
-static TUniquePtr<FHttpServerResponse> MakeJsonError(
-	EHttpServerResponseCodes Code, const FString& Message)
-{
-	FString Body = FString::Printf(TEXT("{\"error\":\"%s\"}"), *Message.ReplaceCharWithEscapedChar());
-	return MakeJsonResponse(Body, Code);
-}
+#include "UAssetReadHelpers.h"
 
 // ---------------------------------------------------------------------------
 // Module lifecycle
@@ -102,14 +87,44 @@ void FUAssetReadModule::StartHttpServer()
 
 	auto BindVerb = [&](const TCHAR* Path, EHttpServerRequestVerbs Verb, auto Handler)
 	{
+		FUAssetReadModule* Self = this;
 		RouteHandles.Add(HttpRouter->BindRoute(
 			FHttpPath(Path), Verb,
-			FHttpRequestHandler::CreateRaw(this, Handler)));
+			[Self, Handler](const FHttpServerRequest& Req, const FHttpResultCallback& OnComplete) -> bool
+			{
+				return (Self->*Handler)(Req, OnComplete);
+			}));
 	};
 
 	BindVerb(TEXT("/dump_asset"),  EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleDumpAsset);
 	BindVerb(TEXT("/list_assets"), EHttpServerRequestVerbs::VERB_GET,  &FUAssetReadModule::HandleListAssets);
 	BindVerb(TEXT("/health"),      EHttpServerRequestVerbs::VERB_GET,  &FUAssetReadModule::HandleHealth);
+
+	// Asset inspection routes
+	BindVerb(TEXT("/get_asset_references"),    EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleGetAssetReferences);
+	BindVerb(TEXT("/dump_niagara_system"),      EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleDumpNiagaraSystem);
+	BindVerb(TEXT("/dump_level_sequence"),      EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleDumpLevelSequence);
+	BindVerb(TEXT("/dump_widget_tree"),         EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleDumpWidgetTree);
+	BindVerb(TEXT("/dump_animation_blueprint"), EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleDumpAnimBlueprint);
+
+	// Blueprint CRUD routes
+	BindVerb(TEXT("/create_blueprint"),         EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleCreateBlueprint);
+	BindVerb(TEXT("/add_blueprint_component"),  EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleAddBlueprintComponent);
+	BindVerb(TEXT("/compile_blueprint"),        EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleCompileBlueprint);
+	BindVerb(TEXT("/add_blueprint_variable"),   EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleAddBlueprintVariable);
+	BindVerb(TEXT("/get_blueprint_info"),       EHttpServerRequestVerbs::VERB_GET,  &FUAssetReadModule::HandleGetBlueprintInfo);
+	BindVerb(TEXT("/list_blueprints"),          EHttpServerRequestVerbs::VERB_GET,  &FUAssetReadModule::HandleListBlueprints);
+
+	// Blueprint Node routes
+	BindVerb(TEXT("/add_blueprint_event_node"),    EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleAddBlueprintEventNode);
+	BindVerb(TEXT("/add_blueprint_function_node"), EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleAddBlueprintFunctionNode);
+	BindVerb(TEXT("/connect_blueprint_nodes"),     EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleConnectBlueprintNodes);
+	BindVerb(TEXT("/find_blueprint_nodes"),        EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleFindBlueprintNodes);
+	BindVerb(TEXT("/add_blueprint_var_get_node"),  EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleAddBlueprintVarGetNode);
+	BindVerb(TEXT("/add_blueprint_var_set_node"),  EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleAddBlueprintVarSetNode);
+	BindVerb(TEXT("/get_blueprint_node_pins"),     EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleGetBlueprintNodePins);
+	BindVerb(TEXT("/delete_blueprint_node"),       EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleDeleteBlueprintNode);
+	BindVerb(TEXT("/batch_edit_blueprint_nodes"),  EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleBatchEditBlueprintNodes);
 
 	HttpModule.StartAllListeners();
 
