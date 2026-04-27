@@ -88,12 +88,13 @@ void FUAssetReadModule::StartHttpServer()
 	auto BindVerb = [&](const TCHAR* Path, EHttpServerRequestVerbs Verb, auto Handler)
 	{
 		FUAssetReadModule* Self = this;
-		RouteHandles.Add(HttpRouter->BindRoute(
-			FHttpPath(Path), Verb,
+		FHttpRequestHandler Callback = FHttpRequestHandler::CreateLambda(
 			[Self, Handler](const FHttpServerRequest& Req, const FHttpResultCallback& OnComplete) -> bool
 			{
 				return (Self->*Handler)(Req, OnComplete);
-			}));
+			});
+		RouteHandles.Add(HttpRouter->BindRoute(
+			FHttpPath(Path), Verb, Callback));
 	};
 
 	BindVerb(TEXT("/dump_asset"),  EHttpServerRequestVerbs::VERB_POST, &FUAssetReadModule::HandleDumpAsset);
